@@ -256,7 +256,8 @@
   .modal-overlay{position:fixed;inset:0;background:rgba(12,22,29,.45);z-index:50;display:flex;align-items:center;justify-content:center;padding:20px}
   .modal-overlay[hidden]{display:none}
   /* Opaque cover shown while a client link loads, so the team view never flashes first. */
-  body.booting::after{content:"Loading…";position:fixed;inset:0;background:var(--bg);color:var(--muted);display:flex;align-items:center;justify-content:center;font-size:14px;letter-spacing:.02em;z-index:200}
+  #bootCover{display:none;position:fixed;inset:0;background:var(--bg);z-index:200;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted);font-size:14px;letter-spacing:.02em}
+  body.booting #bootCover{display:flex}
   /* Mobius (infinity) loader — passcode "thinking" indicator. */
   .mobius-spin{display:block}
   .mobius-spin .mtrack{stroke:var(--brand-soft);stroke-width:3.2;stroke-linecap:round}
@@ -399,6 +400,14 @@
     <div class="modal-body" id="brandList"></div>
     <div class="modal-foot" id="brandAddArea"></div>
   </div>
+</div>
+
+<div id="bootCover">
+  <svg class="mobius-spin" viewBox="0 0 48 24" width="96" height="48" fill="none" aria-hidden="true">
+    <path class="mtrack" d="M24,12 C24,2 10,2 10,12 C10,22 24,22 24,12 C24,2 38,2 38,12 C38,22 24,22 24,12 Z"/>
+    <path class="mrun" pathLength="100" d="M24,12 C24,2 10,2 10,12 C10,22 24,22 24,12 C24,2 38,2 38,12 C38,22 24,22 24,12 Z"/>
+  </svg>
+  <span>Loading…</span>
 </div>
 
 <div class="modal-overlay" id="gate" hidden>
