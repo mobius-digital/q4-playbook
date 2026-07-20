@@ -255,6 +255,14 @@
   /* ---------- Brand manager modal ---------- */
   .modal-overlay{position:fixed;inset:0;background:rgba(12,22,29,.45);z-index:50;display:flex;align-items:center;justify-content:center;padding:20px}
   .modal-overlay[hidden]{display:none}
+  /* Opaque cover shown while a client link loads, so the team view never flashes first. */
+  body.booting::after{content:"Loading…";position:fixed;inset:0;background:var(--bg);color:var(--muted);display:flex;align-items:center;justify-content:center;font-size:14px;letter-spacing:.02em;z-index:200}
+  /* Mobius (infinity) loader — passcode "thinking" indicator. */
+  .mobius-spin{display:block}
+  .mobius-spin .mtrack{stroke:var(--brand-soft);stroke-width:3.2;stroke-linecap:round}
+  .mobius-spin .mrun{stroke:var(--brand);stroke-width:3.2;stroke-linecap:round;stroke-dasharray:22 78;stroke-dashoffset:0;animation:mobius-run 1.15s linear infinite}
+  @keyframes mobius-run{to{stroke-dashoffset:-100}}
+  @media (prefers-reduced-motion:reduce){.mobius-spin .mrun{animation-duration:3.4s}}
   .modal{background:var(--surface);border-radius:14px;width:100%;max-width:440px;box-shadow:0 20px 60px rgba(12,22,29,.3);overflow:hidden}
   .modal-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line)}
   .modal-head h3{font-family:var(--serif);font-size:20px;font-weight:400}
@@ -401,6 +409,12 @@
       <div style="display:flex;gap:8px" id="gateRow">
         <input type="password" id="gateIn" class="ie-in" style="flex:1;min-width:0" placeholder="Passcode">
         <button class="ie-save" id="gateGo">Unlock</button>
+      </div>
+      <div id="gateLoad" style="display:none;flex-direction:column;align-items:center;gap:8px;padding:6px 0 2px">
+        <svg class="mobius-spin" viewBox="0 0 48 24" width="84" height="42" fill="none" aria-hidden="true">
+          <path class="mtrack" d="M24,12 C24,2 10,2 10,12 C10,22 24,22 24,12 C24,2 38,2 38,12 C38,22 24,22 24,12 Z"/>
+          <path class="mrun" pathLength="100" d="M24,12 C24,2 10,2 10,12 C10,22 24,22 24,12 C24,2 38,2 38,12 C38,22 24,22 24,12 Z"/>
+        </svg>
       </div>
     </div>
   </div>
@@ -1362,10 +1376,16 @@ function startAutosave(){
     }catch(e){setSync('error');}
   },2500);
 }
+/* Toggle the passcode gate between its input row and the Mobius "checking…" loader. */
+function gateBusy(on){
+  $('#gateGo').disabled=on;$('#gateIn').disabled=on;
+  if(on){$('#gateRow').style.display='none';$('#gateLoad').style.display='flex';$('#gateMsg').textContent='Checking passcode…';}
+  else{$('#gateLoad').style.display='none';$('#gateRow').style.display='flex';}
+}
 function showGate(msg){
   $('#gate').hidden=false;
-  if(msg){$('#gateMsg').textContent=msg;$('#gateRow').style.display='none';}
-  else{$('#gateMsg').textContent='Enter the Mobius team passcode.';$('#gateRow').style.display='';setTimeout(()=>$('#gateIn').focus(),50);}
+  if(msg){$('#gateMsg').textContent=msg;$('#gateRow').style.display='none';$('#gateLoad').style.display='none';}
+  else{gateBusy(false);$('#gateMsg').textContent='Enter the Mobius team passcode.';setTimeout(()=>$('#gateIn').focus(),50);}
 }
 function hideGate(){$('#gate').hidden=true;}
 async function adminBoot(pass){
@@ -1405,8 +1425,11 @@ async function boot(){
       if(r.bf)$('#bfDate').value=r.bf;
       currentBrand=b;clientMode=true;linkLocked=true;clientKey=k;
       rebuildBrandSelect();renderAll();setSync('synced');startAutosave();
+      document.body.classList.remove('booting');
     }catch(e){
-      renderAll();
+      /* Dead client link: don't expose the team view behind the gate. */
+      document.body.classList.remove('booting');
+      $('#gate').style.background='var(--bg)';
       showGate('This link is invalid or expired. Ask the Mobius team for a fresh one.');
     }
     return;
@@ -1422,17 +1445,28 @@ async function boot(){
 async function gateTry(){
   const inEl=$('#gateIn'),v=inEl.value.trim();
   if(!v){inEl.classList.add('err');setTimeout(()=>inEl.classList.remove('err'),900);return;}
+  gateBusy(true);
   try{await adminBoot(v);}
   catch(e){
+    gateBusy(false);
     inEl.value='';inEl.classList.add('err');
     $('#gateMsg').textContent='Wrong passcode — try again.';
-    setTimeout(()=>inEl.classList.remove('err'),900);
+    setTimeout(()=>{inEl.classList.remove('err');inEl.focus();},900);
   }
 }
 $('#gateGo').addEventListener('click',gateTry);
 $('#gateIn').addEventListener('keydown',e=>{if(e.key==='Enter')gateTry();});
 
-renderAll();
+/* When opened via a client link (backend mode), don't paint the team view
+   first — cover the page until boot() has the client data, so it lands
+   straight on the client view with no flash. */
+function clientLinkPending(){
+  if(!API_ON())return false;
+  const p=new URLSearchParams(location.search);
+  return !!(p.get('brand')&&p.get('key'));
+}
+if(clientLinkPending())document.body.classList.add('booting');
+else renderAll();
 boot();
 </script>
 </body>
