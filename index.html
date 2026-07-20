@@ -728,7 +728,7 @@ function logEntry(brand,dayKey,si){
 /* =============== Backend (Google Apps Script + Sheet) ===============
    Paste your deployed Apps Script Web App URL between the quotes.
    Empty = local demo mode (in-memory, seeded data, derived link tokens). */
-const API_URL='';
+const API_URL='https://script.google.com/macros/s/AKfycbxaIFm8Q2nZ51r_HoF0BXQ6PtIWuitCz3hSLDtvGqhVMTML4CikfvnkPLvdulLC-qq9iA/exec';
 const API_ON=()=>!!API_URL;
 let serverTokens={};   /* brand -> real client-link token from the backend */
 let adminPass=null;    /* team passcode for this session */
