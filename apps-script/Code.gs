@@ -148,7 +148,8 @@ function adminLoad_() {
     brands: bs.map(function (b) { return { name: b.name, token: b.token }; }),
     states: states,
     slots: getGlobal_('slots') || {},
-    bf: getGlobal_('bf') || ''
+    bf: getGlobal_('bf') || '',
+    defaults: getGlobal_('defaults') || {}
   };
 }
 
@@ -158,7 +159,8 @@ function clientLoad_(req) {
   return {
     state: sm[b.name] && sm[b.name].json ? JSON.parse(sm[b.name].json) : null,
     slots: getGlobal_('slots') || {},
-    bf: getGlobal_('bf') || ''
+    bf: getGlobal_('bf') || '',
+    defaults: getGlobal_('defaults') || {}
   };
 }
 
@@ -190,6 +192,7 @@ function clientSave_(req) {
 function saveGlobal_(req) {
   if (req.slots) setGlobal_('slots', req.slots);
   if (req.bf !== undefined && req.bf !== null) setGlobal_('bf', String(req.bf));
+  if (req.defaults) setGlobal_('defaults', req.defaults);
   return {};
 }
 

@@ -108,6 +108,19 @@
   .q-item textarea{width:100%;min-height:44px;resize:vertical;border:1px solid var(--line-strong);border-radius:8px;padding:9px 11px;font-size:14px;line-height:1.45;background:#FBFDFE}
   .q-item textarea:focus{outline:2px solid var(--brand-ink);outline-offset:-1px;border-color:transparent}
   .q-item textarea.answered{background:var(--surface);border-color:var(--line)}
+  /* Rich-text answer editor (auto-expands, formatting toolbar on focus, auto-links) */
+  .q-rich{border:1px solid var(--line-strong);border-radius:8px;background:#FBFDFE}
+  .q-rich.answered{background:var(--surface);border-color:var(--line)}
+  .q-rich:focus-within{outline:2px solid var(--brand-ink);outline-offset:-1px;border-color:transparent}
+  .q-rt-bar{display:flex;gap:2px;padding:4px 5px;border-bottom:1px solid var(--line);background:var(--surface);border-radius:8px 8px 0 0;opacity:0;max-height:0;overflow:hidden;transition:opacity .12s ease,max-height .12s ease}
+  .q-rich:focus-within .q-rt-bar{opacity:1;max-height:40px}
+  .q-rt-btn{min-width:27px;height:24px;border:1px solid transparent;border-radius:5px;background:transparent;font-size:12.5px;color:var(--ink-2);cursor:pointer;line-height:1;padding:0}
+  .q-rt-btn:hover{background:var(--brand-soft);border-color:var(--line)}
+  .q-rt{min-height:26px;padding:9px 11px;font-size:14px;line-height:1.45;outline:none;overflow-wrap:anywhere}
+  .q-rt:empty:before{content:attr(data-ph);color:var(--muted)}
+  .q-rt a{color:var(--brand-ink);text-decoration:underline;cursor:pointer}
+  .q-rt ul,.q-rt ol{margin:4px 0 4px 22px}
+  .q-rt p{margin:0 0 6px}
 
   /* ---------- Timeline ---------- */
   .tl-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:22px 22px 16px;overflow-x:auto}
@@ -137,6 +150,12 @@
 
   /* ---------- Checklist ---------- */
   .cl-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+  .cl-def-toggle{margin-left:8px;border:1px solid var(--line-strong);background:var(--surface);border-radius:99px;padding:6px 13px;font-size:12.5px;font-weight:600;color:var(--brand-ink);cursor:pointer;white-space:nowrap}
+  .cl-def-toggle:hover{border-color:var(--brand-ink)}
+  .cl-def-toggle.on{background:var(--brand-ink);border-color:var(--brand-ink);color:#fff}
+  .cl-def-banner{display:flex;align-items:center;gap:12px;background:var(--brand-soft);border:1px solid var(--brand);border-radius:var(--radius);padding:11px 16px;margin-bottom:16px;font-size:13px;color:var(--brand-ink)}
+  .cl-def-banner[hidden]{display:none}
+  .cl-def-banner button{margin-left:auto;flex:none}
   .chip{border:1px solid var(--line-strong);background:var(--surface);border-radius:99px;padding:6px 13px;font-size:12.5px;font-weight:600;color:var(--ink-2)}
   .chip:hover{border-color:var(--ink-2)}
   .chip.on{background:var(--brand-ink);border-color:var(--brand-ink);color:#fff}
@@ -359,12 +378,16 @@
     <div class="view-head"><h1>Checklist</h1><span class="strat-tag" id="clStrat"></span></div>
     <p class="view-sub">Due date = assets finished and approved. Launch date = live. "Waiting on client" is its own status because that's where timelines actually die.</p>
     <div class="cl-toolbar" id="clToolbar">
-      <button class="chip on" data-f="all">All</button>
-      <button class="chip" data-f="open">Open</button>
-      <button class="chip" data-f="wait">Waiting on client</button>
-      <button class="chip" data-f="launch">Launched</button>
+      <span id="clFilters" style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="chip on" data-f="all">All</button>
+        <button class="chip" data-f="open">Open</button>
+        <button class="chip" data-f="wait">Waiting on client</button>
+        <button class="chip" data-f="launch">Launched</button>
+      </span>
       <div class="cl-progress"><span id="clCount"></span><div class="bar"><i id="clBar"></i></div></div>
+      <button class="cl-def-toggle" id="clDefBtn" style="display:none">⚙ Edit default dates</button>
     </div>
+    <div class="cl-def-banner" id="clDefBanner" hidden><span>Editing the <b>default schedule</b> — dates you change here apply to <b>every brand</b>. Adding, removing, or per-brand date tweaks still stay on that one brand.</span><button class="ie-save" id="clDefDone">Done</button></div>
     <div id="clGroups"></div>
   </section>
 
@@ -746,6 +769,39 @@ store['Lucky Golf'].answers['mix']='Heavy returning customer base + drop culture
 
 const daySlots={}; // dayKey -> [times], shared across brands
 function slotsFor(dayKey){ if(!daySlots[dayKey])daySlots[dayKey]=['8:00 AM','4:00 PM','12:00 AM']; return daySlots[dayKey]; }
+
+/* -------- Schedule dates: base template -> global defaults -> per-brand --------
+   defaultDates[key] = {due:offsetDays, launch:offsetDays}  (shared across all brands)
+   per-brand override lives in store[brand].items[key].due/launch (offset days too).
+   All offsets are days relative to the Black Friday date, so the season re-anchors. */
+const defaultDates={};        // shared default date overrides (team-editable)
+let defaultsMode=false;       // true = checklist edits the shared defaults, not the brand
+let backendDefaults=false;    // whether the deployed backend supports shared defaults (set on boot; feature-detected for live)
+function offFromBF(dt){return Math.round((dt-getBF())/86400000);}
+function dateFromOff(off){return addDays(getBF(),off);}
+function normOff(v){ // an override value -> Date | null  (number=offset, string=legacy ISO)
+  if(v==null||v==='')return null;
+  if(typeof v==='number')return dateFromOff(v);
+  return asDate(v);
+}
+function defOff_(key,which){const g=defaultDates[key];return (g&&g[which]!=null)?g[which]:null;}
+function brandOff_(key,which){const s=store[currentBrand]&&store[currentBrand].items[key];return (s&&s[which]!=null)?s[which]:null;}
+/* date for the current brand: per-brand -> default -> base */
+function effDate(which,key,base){
+  const b=brandOff_(key,which); if(b!=null)return normOff(b)||base;
+  const d=defOff_(key,which);   if(d!=null)return dateFromOff(d);
+  return base;
+}
+/* date on the shared-default layer only: default -> base */
+function defDate(which,key,base){
+  const d=defOff_(key,which); if(d!=null)return dateFromOff(d);
+  return base;
+}
+function setDefaultDate(key,which,off){
+  const g=defaultDates[key]||(defaultDates[key]={});
+  if(off==null)delete g[which]; else g[which]=off;
+  if(g.due==null&&g.launch==null)delete defaultDates[key];
+}
 function logEntry(brand,dayKey,si){
   const L=store[brand].log;
   if(!L[dayKey])L[dayKey]={};
@@ -819,8 +875,26 @@ function getBF(){const[y,m,d]=$('#bfDate').value.split('-').map(Number);return D
 function strat(){return store[currentBrand].strategy;}
 
 /* =============== Render orchestration =============== */
+/* Effective due+launch for every live item in a section (mode: 'eff' brand view, 'default' defaults layer). */
+function sectionItemDates(c,mode){
+  const which=mode==='default'?defDate:effDate;
+  const base=c.items.map((it,i)=>({it,key:c.id+'-'+i}));
+  const list=mode==='default'?base:base.concat((store[currentBrand].extra[c.id]||[]).map((it,i)=>({it,key:c.id+'-'+(c.items.length+i)})));
+  return list.filter(x=>mode==='default'||!itemState(x.key).deleted)
+    .map(x=>({key:x.key,it:x.it,due:which('due',x.key,asDate(x.it.due)),launch:which('launch',x.key,asDate(x.it.launch))}));
+}
+/* Section span = earliest .. latest of all its task dates. */
+function sectionRange(c,mode){
+  let min=null,max=null;
+  sectionItemDates(c,mode).forEach(d=>[d.due,d.launch].forEach(dt=>{if(dt){if(!min||dt<min)min=dt;if(!max||dt>max)max=dt;}}));
+  return {start:min,end:max};
+}
+function earliest(due,launch){return (due&&launch)?(due<launch?due:launch):(due||launch);}
 function renderAll(){
   season=buildSeason(getBF(),strat());
+  /* reorder sections chronologically by their earliest task */
+  season.forEach(c=>{c._start=sectionRange(c,defaultsMode?'default':'eff').start;});
+  season.sort((a,b)=>{if(!a._start)return 1;if(!b._start)return -1;return a._start-b._start;});
   renderHeader();renderPlan();renderTimeline();renderChecklist();renderCommand();renderTools();
 }
 function renderHeader(){
@@ -851,6 +925,69 @@ function switchView(v){
 }
 
 /* ---------------- Plan ---------------- */
+/* ---------- Rich-text answers: bold/italic/underline/lists, auto-link, auto-expand ---------- */
+const RT_OK={B:1,STRONG:1,I:1,EM:1,U:1,UL:1,OL:1,LI:1,A:1,BR:1,DIV:1,P:1,SPAN:1};
+function rtClean_(node,out){
+  node.childNodes.forEach(ch=>{
+    if(ch.nodeType===3){out.appendChild(document.createTextNode(ch.nodeValue));}
+    else if(ch.nodeType===1){
+      const tag=ch.tagName;
+      if(tag==='SCRIPT'||tag==='STYLE')return;
+      if(RT_OK[tag]){
+        const e=document.createElement(tag);
+        if(tag==='A'){const h=ch.getAttribute('href')||'';if(/^(https?:|mailto:)/i.test(h)){e.setAttribute('href',h);e.setAttribute('target','_blank');e.setAttribute('rel','noopener noreferrer');}}
+        rtClean_(ch,e);out.appendChild(e);
+      }else{rtClean_(ch,out);} /* unwrap unknown tags, keep their text */
+    }
+  });
+}
+/* Parse in an inert document (DOMParser) so images/scripts never load or run while sanitizing. */
+function rtParse_(html){return new DOMParser().parseFromString(html||'','text/html').body;}
+function rtSanitize(html){const d=document.createElement('div');rtClean_(rtParse_(html),d);return d.innerHTML;}
+function rtText(html){return (rtParse_(html).textContent||'').replace(/ /g,' ').trim();}
+function rtIsHtml(s){return /<(\/?)(b|strong|i|em|u|ul|ol|li|a|br|div|p|span)\b/i.test(s||'');}
+const RT_URL=/(https?:\/\/[^\s<]+[^\s<.,;:!?)\]]|www\.[^\s<]+[^\s<.,;:!?)\]])/gi;
+function rtLinkify(root){
+  const tns=[],w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,null);
+  while(w.nextNode())tns.push(w.currentNode);
+  tns.forEach(tn=>{
+    if(!tn.nodeValue||!tn.parentNode||(tn.parentNode.closest&&tn.parentNode.closest('a')))return;
+    RT_URL.lastIndex=0;if(!RT_URL.test(tn.nodeValue))return;RT_URL.lastIndex=0;
+    const s=tn.nodeValue,frag=document.createDocumentFragment();let last=0,m;
+    while((m=RT_URL.exec(s))){
+      const url=m[0],start=m.index;
+      if(start>last)frag.appendChild(document.createTextNode(s.slice(last,start)));
+      const a=document.createElement('a');a.href=/^www\./i.test(url)?'https://'+url:url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=url;
+      frag.appendChild(a);last=start+url.length;
+    }
+    if(last<s.length)frag.appendChild(document.createTextNode(s.slice(last)));
+    tn.parentNode.replaceChild(frag,tn);
+  });
+}
+function mkRichAnswer(qid,val,editable,onChange){
+  const box=document.createElement('div');box.className='q-rich';
+  const ed=document.createElement('div');ed.className='q-rt';ed.dataset.q=qid;ed.setAttribute('data-ph','—');ed.contentEditable=editable?'true':'false';
+  if(rtIsHtml(val))ed.innerHTML=rtSanitize(val);else ed.textContent=val||'';
+  rtLinkify(ed);
+  box.classList.toggle('answered',!!rtText(ed.innerHTML));
+  function commit(html){box.classList.toggle('answered',!!rtText(html));onChange(html);}
+  if(editable){
+    const bar=document.createElement('div');bar.className='q-rt-bar';
+    const mkBtn=(cmd,html,title)=>{const b=document.createElement('button');b.type='button';b.className='q-rt-btn';b.innerHTML=html;b.title=title;
+      b.addEventListener('mousedown',e=>{e.preventDefault();ed.focus();try{document.execCommand(cmd,false,null);}catch(_){}commit(rtSanitize(ed.innerHTML));});return b;};
+    bar.appendChild(mkBtn('bold','<b>B</b>','Bold'));
+    bar.appendChild(mkBtn('italic','<i>I</i>','Italic'));
+    bar.appendChild(mkBtn('underline','<u>U</u>','Underline'));
+    bar.appendChild(mkBtn('insertUnorderedList','&bull;','Bullet list'));
+    bar.appendChild(mkBtn('insertOrderedList','1.','Numbered list'));
+    box.appendChild(bar);
+    ed.addEventListener('input',()=>commit(rtSanitize(ed.innerHTML)));
+    ed.addEventListener('blur',()=>{rtLinkify(ed);const html=rtSanitize(ed.innerHTML);ed.innerHTML=html;rtLinkify(ed);commit(ed.innerHTML);});
+  }
+  ed.addEventListener('click',e=>{const a=e.target&&e.target.closest&&e.target.closest('a');if(a&&a.href){e.preventDefault();window.open(a.href,'_blank','noopener');}});
+  box.appendChild(ed);
+  return box;
+}
 function renderPlan(){
   $('#planTitle').textContent=currentBrand+' — season plan';
   // strategy cards
@@ -878,14 +1015,11 @@ function renderPlan(){
     sec.qs.forEach(q=>{
       total++;
       const val=data[q.id]||'';
-      if(val.trim()){done++;sDone++;}
+      if(rtText(val)){done++;sDone++;}
       const item=document.createElement('div');item.className='q-item';
-      item.innerHTML=`<label for="q-${q.id}">${q.l}</label><div class="hint">${q.h}</div>`;
-      const ta=document.createElement('textarea');
-      ta.id='q-'+q.id;ta.value=val;ta.placeholder='—';
-      if(val.trim())ta.classList.add('answered');
-      ta.addEventListener('input',()=>{store[currentBrand].answers[q.id]=ta.value;ta.classList.toggle('answered',!!ta.value.trim());updatePlanNav();});
-      item.appendChild(ta);el.appendChild(item);
+      item.innerHTML=`<label>${q.l}</label><div class="hint">${q.h}</div>`;
+      item.appendChild(mkRichAnswer(q.id,val,true,html=>{store[currentBrand].answers[q.id]=html;updatePlanNav();}));
+      el.appendChild(item);
     });
     wrap.appendChild(el);
     const a=document.createElement('a');
@@ -903,7 +1037,7 @@ function updatePlanNav(){
   let total=0,done=0;
   Q_SECTIONS.forEach(sec=>{
     let sDone=0;
-    sec.qs.forEach(q=>{total++;if((data[q.id]||'').trim()){done++;sDone++;}});
+    sec.qs.forEach(q=>{total++;if(rtText(data[q.id])){done++;sDone++;}});
     const pct=document.querySelector(`.pct[data-sec="${sec.id}"]`);
     if(pct){pct.textContent=`${sDone}/${sec.qs.length}`;pct.classList.toggle('done',sDone===sec.qs.length);}
   });
@@ -926,10 +1060,13 @@ function renderTimeline(){
   const cols=months.map(m=>m.days+'fr').join(' ');
   let html=`<div class="tl-months" style="grid-template-columns:${cols}">`+months.map(m=>`<div class="tl-month">${m.name}</div>`).join('')+'</div>';
   season.forEach(c=>{
-    const l=pct(c.live[0]),r=pct(addDays(c.live[1],1));
+    const dates=sectionItemDates(c,'eff');
+    const dues=dates.map(d=>d.due).filter(Boolean);
+    const launches=dates.map(d=>d.launch).filter(Boolean);
+    const mn=a=>a.reduce((m,x)=>x<m?x:m),mx=a=>a.reduce((m,x)=>x>m?x:m);
     let bars='';
-    if(c.prep){const pl=pct(c.prep[0]),pr=pct(addDays(c.prep[1],1));bars+=`<div class="tl-bar prep" style="--c:${c.color};left:${pl}%;width:${Math.max(pr-pl,.6)}%"></div>`;}
-    bars+=`<div class="tl-bar" style="--c:${c.color};left:${l}%;width:${Math.max(r-l,.7)}%"><span class="cap">${fmt(c.live[0])}${c.live[1]>c.live[0]?' – '+fmt(c.live[1]):''}</span></div>`;
+    if(dues.length){const pl=pct(mn(dues)),pr=pct(addDays(mx(dues),1));bars+=`<div class="tl-bar prep" style="--c:${c.color};left:${pl}%;width:${Math.max(pr-pl,.6)}%"></div>`;}
+    if(launches.length){const l=pct(mn(launches)),r=pct(addDays(mx(launches),1));bars+=`<div class="tl-bar" style="--c:${c.color};left:${l}%;width:${Math.max(r-l,.7)}%"><span class="cap">${fmt(mn(launches))}${mx(launches)>mn(launches)?' – '+fmt(mx(launches)):''}</span></div>`;}
     html+=`<div class="tl-row"><div class="tl-label">${c.name}<span class="sub">${c.sub}</span></div><div class="tl-track"><div class="tl-grid" style="grid-template-columns:${cols}">${months.map(()=>'<i></i>').join('')}</div><div class="tl-bf" style="left:${pct(bf)}%"></div>${bars}</div></div>`;
   });
   inner.innerHTML=html;
@@ -968,35 +1105,49 @@ function matchFilter(st){
 }
 function renderChecklist(){
   $('#clStrat').textContent=STRATS[strat()].tag;
+  const defMode=defaultsMode&&!clientMode;
+  updateDefaultsUI(defMode);
   const wrap=$('#clGroups');wrap.innerHTML='';
   season.forEach(c=>{
-    const allItems=c.items.concat(store[currentBrand].extra[c.id]||[]);
-    const rows=[];
-    allItems.forEach((item,i)=>{
-      const key=c.id+'-'+i;
-      const st=itemState(key);
-      if(st.deleted)return;
-      if(!matchFilter(st.status))return;
-      rows.push({item,key,st});
-    });
-    if(!rows.length&&clFilter!=='all')return;
+    let rows=[];
+    if(defMode){
+      c.items.forEach((item,i)=>{const key=c.id+'-'+i;
+        rows.push({item,key,st:null,due:defDate('due',key,asDate(item.due)),launch:defDate('launch',key,asDate(item.launch))});});
+    }else{
+      const allItems=c.items.concat(store[currentBrand].extra[c.id]||[]);
+      allItems.forEach((item,i)=>{const key=c.id+'-'+i;const st=itemState(key);
+        if(st.deleted)return;
+        if(!matchFilter(st.status))return;
+        rows.push({item,key,st,due:effDate('due',key,asDate(item.due)),launch:effDate('launch',key,asDate(item.launch))});});
+    }
+    if(!rows.length&&(defMode||clFilter!=='all'))return;
+    /* chronological: earliest of due/launch first */
+    rows.sort((a,b)=>{const ea=earliest(a.due,a.launch),eb=earliest(b.due,b.launch);if(!ea)return 1;if(!eb)return -1;return ea-eb;});
     const g=document.createElement('div');g.className='cl-group';
-    const states=allItems.map((_,i)=>itemState(c.id+'-'+i));
-    const liveCt=states.filter(s=>!s.deleted).length;
-    const doneCt=states.filter(s=>!s.deleted&&s.status==='launch').length;
-    g.innerHTML=`<div class="cl-group-head"><span class="cl-dot" style="background:${c.color}"></span><h3>${c.name}</h3><span class="dates">live ${fmt(c.live[0])}${c.live[1]>c.live[0]?' – '+fmt(c.live[1]):''}</span><span class="count">${doneCt}/${liveCt} launched</span></div>`;
+    const range=sectionRange(c,defMode?'default':'eff');
+    const rangeTxt=range.start?fmt(range.start)+(range.end&&range.end>range.start?' – '+fmt(range.end):''):'';
+    let countHtml='';
+    if(!defMode){
+      const allItems=c.items.concat(store[currentBrand].extra[c.id]||[]);
+      const states=allItems.map((_,i)=>itemState(c.id+'-'+i));
+      const liveCt=states.filter(s=>!s.deleted).length,doneCt=states.filter(s=>!s.deleted&&s.status==='launch').length;
+      countHtml=`<span class="count">${doneCt}/${liveCt} launched</span>`;
+    }
+    g.innerHTML=`<div class="cl-group-head"><span class="cl-dot" style="background:${c.color}"></span><h3>${c.name}</h3><span class="dates">${rangeTxt}</span>${countHtml}</div>`;
     const tbl=document.createElement('table');
-    tbl.innerHTML=`<thead><tr><th style="width:32%">Action item</th><th>Due</th><th>Launch</th><th>Owner</th><th>Status</th><th style="width:20%">Notes</th><th>Inspo</th><th></th></tr></thead>`;
+    tbl.innerHTML=defMode
+      ?`<thead><tr><th style="width:56%">Action item</th><th>Due</th><th>Launch</th></tr></thead>`
+      :`<thead><tr><th style="width:32%">Action item</th><th>Due</th><th>Launch</th><th>Owner</th><th>Status</th><th style="width:20%">Notes</th><th>Inspo</th><th></th></tr></thead>`;
     const tb=document.createElement('tbody');
-    rows.forEach(({item,key,st})=>{
+    rows.forEach(({item,key,st,due,launch})=>{
       const tr=document.createElement('tr');
-      if(st.status==='launch')tr.className='done';
-      const dueEff=asDate(st.due)||asDate(item.due);
-      const launchEff=asDate(st.launch)||asDate(item.launch);
-      const duePast=dueEff&&dueEff<TODAY&&st.status!=='launch'&&st.status!=='ready';
+      if(!defMode&&st.status==='launch')tr.className='done';
+      const duePast=!defMode&&due&&due<TODAY&&st.status!=='launch'&&st.status!=='ready';
       tr.innerHTML=`<td class="cl-name">${item.name}</td>`;
-      tr.appendChild(mkDateCell(dueEff,!clientMode,duePast,v=>{setItemState(key,{due:v});renderChecklist();}));
-      tr.appendChild(mkDateCell(launchEff,!clientMode,false,v=>{setItemState(key,{launch:v});renderChecklist();}));
+      const onD=which=>v=>{const off=v?offFromBF(asDate(v)):null;if(defMode)setDefaultDate(key,which,off);else setItemState(key,{[which]:off});renderAll();};
+      tr.appendChild(mkDateCell(due,!clientMode,duePast,onD('due')));
+      tr.appendChild(mkDateCell(launch,!clientMode,false,onD('launch')));
+      if(defMode){tb.appendChild(tr);return;}
       const tdO=document.createElement('td');
       tdO.appendChild(mkPersonSel(st.owner,clientMode,v=>setItemState(key,{owner:v})));
       tr.appendChild(tdO);
@@ -1053,7 +1204,7 @@ function renderChecklist(){
       tb.appendChild(tr);
     });
     tbl.appendChild(tb);g.appendChild(tbl);
-    if(!clientMode){
+    if(!clientMode&&!defMode){
       const add=document.createElement('div');add.className='cl-add';
       add.appendChild(mkInlineEdit({
         buttonLabel:'+ Add item',placeholder:'New item name',
@@ -1309,6 +1460,16 @@ document.querySelectorAll('#clToolbar .chip').forEach(ch=>{
 document.querySelectorAll('#ccSubTabs .chip').forEach(ch=>{
   ch.addEventListener('click',()=>{ccMode=ch.dataset.cc;renderCommand();});
 });
+/* ---- Edit-defaults mode (team-only): checklist edits the shared default schedule ---- */
+function updateDefaultsUI(defMode){
+  const btn=$('#clDefBtn'),ban=$('#clDefBanner'),filters=$('#clFilters'),prog=$('#clToolbar .cl-progress');
+  if(btn){btn.style.display=(clientMode||!backendDefaults)?'none':'';btn.textContent=defMode?'✓ Done editing defaults':'⚙ Edit default dates';btn.classList.toggle('on',defMode);}
+  if(ban)ban.hidden=!defMode;
+  if(filters)filters.style.display=defMode?'none':'flex';
+  if(prog)prog.style.display=defMode?'none':'';
+}
+$('#clDefBtn').addEventListener('click',()=>{defaultsMode=!defaultsMode;renderAll();});
+$('#clDefDone').addEventListener('click',()=>{defaultsMode=false;renderAll();});
 /* ---- Brand manager modal ---- */
 function openBrandModal(){$('#brandModal').hidden=false;renderBrandModal();}
 function closeBrandModal(){$('#brandModal').hidden=true;}
@@ -1376,6 +1537,7 @@ function snapshot(){
   BRANDS.forEach(b=>s[b]=JSON.stringify(store[b]));
   s['__slots']=JSON.stringify(daySlots);
   s['__bf']=$('#bfDate').value;
+  s['__defaults']=JSON.stringify(defaultDates);
   return s;
 }
 function collectNotes(b){
@@ -1389,7 +1551,7 @@ function startAutosave(){
     if(syncStatus==='saving'||syncStatus==='loading')return;
     const now=snapshot();
     const dirty=BRANDS.filter(b=>now[b]!==lastSaved[b]);
-    const globalDirty=!clientMode&&(now['__slots']!==lastSaved['__slots']||now['__bf']!==lastSaved['__bf']);
+    const globalDirty=!clientMode&&(now['__slots']!==lastSaved['__slots']||now['__bf']!==lastSaved['__bf']||now['__defaults']!==lastSaved['__defaults']);
     if(!dirty.length&&!globalDirty)return;
     try{
       setSync('saving');
@@ -1399,8 +1561,8 @@ function startAutosave(){
         lastSaved[b]=now[b];
       }
       if(globalDirty){
-        await api('saveGlobal',{pass:adminPass,slots:daySlots,bf:now['__bf']});
-        lastSaved['__slots']=now['__slots'];lastSaved['__bf']=now['__bf'];
+        await api('saveGlobal',{pass:adminPass,slots:daySlots,bf:now['__bf'],defaults:defaultDates});
+        lastSaved['__slots']=now['__slots'];lastSaved['__bf']=now['__bf'];lastSaved['__defaults']=now['__defaults'];
       }
       setSync('synced');
     }catch(e){setSync('error');}
@@ -1421,6 +1583,7 @@ function hideGate(){$('#gate').hidden=true;}
 async function adminBoot(pass){
   setSync('loading');
   const r=await api('adminLoad',{pass});
+  backendDefaults=('defaults' in r);
   adminPass=pass;
   try{sessionStorage.setItem('q4pass',pass);}catch(e){}
   BRANDS.length=0;serverTokens={};
@@ -1429,6 +1592,8 @@ async function adminBoot(pass){
   BRANDS.forEach(n=>store[n]=hydrate(r.states[n]));
   Object.keys(daySlots).forEach(k=>delete daySlots[k]);
   Object.assign(daySlots,r.slots||{});
+  Object.keys(defaultDates).forEach(k=>delete defaultDates[k]);
+  Object.assign(defaultDates,r.defaults||{});
   if(r.bf)$('#bfDate').value=r.bf;
   if(!BRANDS.length){
     const nm='My First Brand';
@@ -1452,6 +1617,8 @@ async function boot(){
       store[b]=hydrate(r.state);
       Object.keys(daySlots).forEach(x=>delete daySlots[x]);
       Object.assign(daySlots,r.slots||{});
+      Object.keys(defaultDates).forEach(x=>delete defaultDates[x]);
+      Object.assign(defaultDates,r.defaults||{});
       if(r.bf)$('#bfDate').value=r.bf;
       currentBrand=b;clientMode=true;linkLocked=true;clientKey=k;
       rebuildBrandSelect();renderAll();setSync('synced');startAutosave();
@@ -1495,6 +1662,7 @@ function clientLinkPending(){
   const p=new URLSearchParams(location.search);
   return !!(p.get('brand')&&p.get('key'));
 }
+backendDefaults=!API_ON(); // demo mode supports it locally; live mode is feature-detected in adminBoot
 if(clientLinkPending())document.body.classList.add('booting');
 else renderAll();
 boot();
