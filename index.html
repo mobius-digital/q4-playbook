@@ -284,6 +284,30 @@
   .gate-link{background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline;padding:2px}
   .gate-link:hover{color:var(--brand-ink)}
   #gsiBtn{min-height:44px;display:flex;justify-content:center}
+  /* ---------- Login screen (full-page, opaque, on-theme) ---------- */
+  .login{position:fixed;inset:0;z-index:300;background:var(--hd);color:#DFEAF2;display:flex;align-items:center;justify-content:center;padding:28px 20px;overflow:hidden;
+    background-image:radial-gradient(60% 55% at 22% 18%,rgba(98,189,234,.22),transparent 70%),radial-gradient(45% 45% at 84% 82%,rgba(20,96,140,.35),transparent 70%)}
+  .login[hidden]{display:none}
+  body.login-open{overflow:hidden}
+  .login-bg{position:absolute;inset:0;pointer-events:none}
+  .login-bar{position:absolute;top:var(--y);left:var(--x);width:var(--w);height:14px;border-radius:99px;background:var(--c);opacity:.13;
+    animation:login-drift 26s ease-in-out infinite;animation-delay:var(--d)}
+  .login-bar:nth-child(2n){height:6px;opacity:.10}
+  @keyframes login-drift{0%,100%{transform:translateX(0)}50%{transform:translateX(26px)}}
+  .login-bf{position:absolute;top:8%;bottom:8%;width:0;border-left:1.5px dashed rgba(98,189,234,.35)}
+  .login-bf::after{content:"BF";position:absolute;top:-4px;left:8px;font-size:10px;font-weight:700;letter-spacing:.08em;color:rgba(98,189,234,.6)}
+  .login-panel{position:relative;width:100%;max-width:440px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px}
+  .login-logo{height:36px;display:block;margin-bottom:6px}
+  .login-title{font-family:var(--serif);font-weight:400;font-size:44px;line-height:1.05;color:#fff;letter-spacing:-.01em}
+  .login-title em{font-style:italic;color:var(--brand)}
+  .login-sub{font-size:14px;line-height:1.55;color:#9FB4C2;max-width:36ch;text-wrap:pretty}
+  .login-count{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--hd);background:var(--brand);border-radius:99px;padding:6px 13px;margin-top:2px}
+  .login-count:empty{display:none}
+  .login-card{width:100%;background:var(--surface);color:var(--ink);border-radius:14px;padding:22px 22px 18px;margin-top:10px;box-shadow:0 24px 70px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.06)}
+  .login-msg{font-size:13.5px;color:var(--muted);margin-bottom:14px;text-wrap:pretty}
+  .login-foot{font-size:12px;color:#7F94A3;max-width:40ch;line-height:1.5;margin-top:4px}
+  @media (prefers-reduced-motion:reduce){.login-bar{animation:none}}
+  @media (max-width:480px){.login-title{font-size:36px}.login-card{padding:18px 16px 14px}}
   /* Mobius (infinity) loader — passcode "thinking" indicator. */
   .mobius-spin{display:block}
   .mobius-spin .mtrack{stroke:var(--brand-soft);stroke-width:3.2;stroke-linecap:round}
@@ -453,12 +477,24 @@
   <span>Loading…</span>
 </div>
 
-<div class="modal-overlay" id="gate" hidden>
-  <div class="modal">
-    <div class="modal-head"><h3>Q4 Playbook</h3></div>
-    <div style="padding:18px 20px">
-      <p style="font-size:13px;color:var(--muted);margin-bottom:14px" id="gateMsg">Sign in to your Q4 Playbook.</p>
-      <div id="gsiWrap" style="display:flex;flex-direction:column;align-items:center;gap:12px">
+<div class="login" id="gate" hidden>
+  <div class="login-bg" aria-hidden="true">
+    <span class="login-bar" style="--y:14%;--x:-6%;--w:34%;--d:0s;--c:#5E7080"></span>
+    <span class="login-bar" style="--y:26%;--x:58%;--w:44%;--d:-7s;--c:#A6551D"></span>
+    <span class="login-bar" style="--y:41%;--x:8%;--w:22%;--d:-3s;--c:#71568F"></span>
+    <span class="login-bar" style="--y:63%;--x:70%;--w:38%;--d:-11s;--c:#237795"></span>
+    <span class="login-bar" style="--y:76%;--x:-10%;--w:48%;--d:-5s;--c:#62BDEA"></span>
+    <span class="login-bar" style="--y:89%;--x:52%;--w:30%;--d:-9s;--c:#3E5C74"></span>
+    <span class="login-bf" style="left:66%"></span>
+  </div>
+  <div class="login-panel">
+    <img class="login-logo" id="loginLogo" alt="Mobius Digital">
+    <h1 class="login-title">Q4 <em>Playbook</em></h1>
+    <p class="login-sub">The BFCM season, planned brand by brand — offers, timeline, checklist, and the weekend command center.</p>
+    <div class="login-count" id="loginCount"></div>
+    <div class="login-card">
+      <p class="login-msg" id="gateMsg">Sign in to your Q4 Playbook.</p>
+      <div id="gsiWrap" style="display:flex;flex-direction:column;align-items:center;gap:14px">
         <div id="gsiBtn"></div>
         <button id="gatePassLink" class="gate-link">Use team passcode instead</button>
       </div>
@@ -473,6 +509,7 @@
         </svg>
       </div>
     </div>
+    <p class="login-foot">Team members only. Clients don't sign in — they use the private link their Mobius contact sent.</p>
   </div>
 </div>
 
@@ -1644,7 +1681,12 @@ function gateBusy(on,msg){
   else{$('#gateLoad').style.display='none';}
 }
 function showGate(msg,hideSignin){
-  $('#gate').hidden=false;
+  $('#gate').hidden=false;document.body.classList.add('login-open');
+  /* branded login screen: reuse the header logo, show days to Black Friday */
+  const lg=$('#loginLogo'),hl=document.querySelector('header .logo');
+  if(lg&&hl&&!lg.getAttribute('src'))lg.src=hl.src;
+  const days=Math.round((getBF()-TODAY)/86400000);
+  $('#loginCount').textContent=days>0?`${days} days to Black Friday`:(days===0?'Black Friday is today':'Season wrapped');
   $('#gateLoad').style.display='none';$('#gateRow').style.display='none';
   if(hideSignin){$('#gsiWrap').style.display='none';}
   else{$('#gsiWrap').style.display='flex';renderGSI();}
@@ -1656,7 +1698,7 @@ function showPasscode(){
   $('#gateMsg').textContent='Enter the Mobius team passcode.';
   setTimeout(()=>$('#gateIn').focus(),50);
 }
-function hideGate(){$('#gate').hidden=true;}
+function hideGate(){$('#gate').hidden=true;document.body.classList.remove('login-open');}
 
 let gsiInit=false;
 function renderGSI(){
@@ -1725,9 +1767,8 @@ async function boot(){
       rebuildBrandSelect();renderAll();setSync('synced');startAutosave();
       document.body.classList.remove('booting');
     }catch(e){
-      /* Dead client link: don't expose the team view behind the gate. */
+      /* Dead client link: the opaque login screen never exposes the team view. */
       document.body.classList.remove('booting');
-      $('#gate').style.background='var(--bg)';
       showGate('This link is invalid or expired. Ask the Mobius team for a fresh one.',true);
     }
     return;
