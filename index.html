@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Q4 Playbook — Mobius Digital</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
@@ -280,6 +281,9 @@
   /* Opaque cover shown while a client link loads, so the team view never flashes first. */
   #bootCover{display:none;position:fixed;inset:0;background:var(--bg);z-index:200;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted);font-size:14px;letter-spacing:.02em}
   body.booting #bootCover{display:flex}
+  .gate-link{background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline;padding:2px}
+  .gate-link:hover{color:var(--brand-ink)}
+  #gsiBtn{min-height:44px;display:flex;justify-content:center}
   /* Mobius (infinity) loader — passcode "thinking" indicator. */
   .mobius-spin{display:block}
   .mobius-spin .mtrack{stroke:var(--brand-soft);stroke-width:3.2;stroke-linecap:round}
@@ -336,6 +340,8 @@
       <button class="mode-btn" id="copyLinkBtn">Copy client link</button>
       <input id="clientLinkOut" class="bf-date" style="display:none;width:230px" readonly>
       <button class="mode-btn" id="modeBtn">Preview client view</button>
+      <button class="mode-btn" id="usersBtn" style="display:none" title="Manage who can sign in">👥 Users</button>
+      <button class="mode-btn" id="signoutBtn" style="display:none" title="Sign out">Sign out</button>
     </div>
   </div>
   <nav class="tabs" role="tablist" id="tabBar">
@@ -430,6 +436,15 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="usersModal" hidden>
+  <div class="modal">
+    <div class="modal-head"><h3>Who can sign in</h3><button class="modal-x" id="usersModalX" title="Close">×</button></div>
+    <p style="font-size:12.5px;color:var(--muted);padding:12px 20px 0">Anyone here can sign in with their Google account. You (owner) are always allowed.</p>
+    <div class="modal-body" id="usersList"></div>
+    <div class="modal-foot" id="usersAddArea"></div>
+  </div>
+</div>
+
 <div id="bootCover">
   <svg class="mobius-spin" viewBox="0 0 48 24" width="96" height="48" fill="none" aria-hidden="true">
     <path class="mtrack" d="M24,12 C24,2 10,2 10,12 C10,22 24,22 24,12 C24,2 38,2 38,12 C38,22 24,22 24,12 Z"/>
@@ -442,8 +457,12 @@
   <div class="modal">
     <div class="modal-head"><h3>Q4 Playbook</h3></div>
     <div style="padding:18px 20px">
-      <p style="font-size:13px;color:var(--muted);margin-bottom:12px" id="gateMsg">Enter the Mobius team passcode.</p>
-      <div style="display:flex;gap:8px" id="gateRow">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:14px" id="gateMsg">Sign in to your Q4 Playbook.</p>
+      <div id="gsiWrap" style="display:flex;flex-direction:column;align-items:center;gap:12px">
+        <div id="gsiBtn"></div>
+        <button id="gatePassLink" class="gate-link">Use team passcode instead</button>
+      </div>
+      <div style="display:none;gap:8px" id="gateRow">
         <input type="password" id="gateIn" class="ie-in" style="flex:1;min-width:0" placeholder="Passcode">
         <button class="ie-save" id="gateGo">Unlock</button>
       </div>
@@ -816,8 +835,13 @@ function logEntry(brand,dayKey,si){
    Empty = local demo mode (in-memory, seeded data, derived link tokens). */
 const API_URL='https://script.google.com/macros/s/AKfycbxaIFm8Q2nZ51r_HoF0BXQ6PtIWuitCz3hSLDtvGqhVMTML4CikfvnkPLvdulLC-qq9iA/exec';
 const API_ON=()=>!!API_URL;
+const GOOGLE_CLIENT_ID='1084707732685-tu8ra68po4vs4rhbt71rkpej72g4pg28.apps.googleusercontent.com';
 let serverTokens={};   /* brand -> real client-link token from the backend */
-let adminPass=null;    /* team passcode for this session */
+let adminPass=null;    /* team passcode for this session (emergency fallback) */
+let authTok=null;      /* Google session token from the backend */
+let isAdmin=false;     /* true for the owner — can manage users */
+let myEmail='';        /* signed-in email */
+let serverUsers=[];    /* allow-listed emails (owner view) */
 let clientKey=null;    /* set when loaded via a client link */
 let syncStatus='local';
 function setSync(s){
@@ -826,11 +850,17 @@ function setSync(s){
   el.dataset.s=s;
   el.textContent={local:'local demo',loading:'loading…',saving:'saving…',synced:'synced',error:'offline — retrying'}[s]||s;
 }
+const PUBLIC_ACTIONS={clientLoad:1,clientSave:1,googleAuth:1};
 async function api(action,payload){
+  const body=Object.assign({action},payload||{});
+  if(!PUBLIC_ACTIONS[action]){          /* team actions carry the session token (+ passcode fallback) */
+    if(authTok)body.auth=authTok;
+    if(adminPass)body.pass=adminPass;
+  }
   const res=await fetch(API_URL,{
     method:'POST',
     headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body:JSON.stringify(Object.assign({action},payload||{}))
+    body:JSON.stringify(body)
   });
   const j=await res.json();
   if(!j.ok)throw new Error(j.error||'API error');
@@ -909,6 +939,8 @@ function renderHeader(){
   $('#modeBtn').style.display=linkLocked?'none':'';
   $('#copyLinkBtn').style.display=clientMode?'none':'';
   $('#clientLinkOut').style.display='none';
+  $('#usersBtn').style.display=(!clientMode&&isAdmin&&API_ON())?'':'none';
+  $('#signoutBtn').style.display=(!clientMode&&API_ON()&&(authTok||adminPass))?'':'none';
   if(clientMode&&!$('#brandModal').hidden)closeBrandModal();
   document.querySelectorAll('.tab').forEach(t=>{
     if(t.dataset.teamonly)t.style.display=clientMode?'none':'';
@@ -1514,6 +1546,43 @@ $('#brandModalX').addEventListener('click',closeBrandModal);
 $('#brandModal').addEventListener('click',e=>{if(e.target.id==='brandModal')closeBrandModal();});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#brandModal').hidden)closeBrandModal();});
 
+/* ---- Manage users modal (owner only) ---- */
+function openUsersModal(){$('#usersModal').hidden=false;renderUsersModal();api('listUsers',{}).then(r=>{serverUsers=r.users||[];renderUsersModal();}).catch(()=>{});}
+function closeUsersModal(){$('#usersModal').hidden=true;}
+function renderUsersModal(){
+  const list=$('#usersList');list.innerHTML='';
+  const owner=document.createElement('div');owner.className='mb-row';
+  const on=document.createElement('span');on.textContent=myEmail||'you';owner.appendChild(on);
+  const ot=document.createElement('span');ot.className='tag';ot.textContent='Owner';owner.appendChild(ot);
+  list.appendChild(owner);
+  serverUsers.forEach(email=>{
+    const row=document.createElement('div');row.className='mb-row';
+    const nm=document.createElement('span');nm.textContent=email;row.appendChild(nm);
+    const db=document.createElement('button');db.className='del-btn';db.textContent='×';db.title='Remove access';
+    let armed=false,timer=null;
+    db.addEventListener('click',()=>{
+      if(!armed){armed=true;db.classList.add('armed');db.textContent='Remove?';timer=setTimeout(()=>{armed=false;db.classList.remove('armed');db.textContent='×';},2500);return;}
+      clearTimeout(timer);
+      api('removeUser',{email}).then(r=>{serverUsers=r.users||[];renderUsersModal();}).catch(()=>setSync('error'));
+    });
+    row.appendChild(db);list.appendChild(row);
+  });
+  const foot=$('#usersAddArea');foot.innerHTML='';
+  foot.appendChild(mkInlineEdit({
+    buttonLabel:'+ Add person',placeholder:'name@email.com',
+    onSave:v=>{
+      v=(v||'').trim().toLowerCase();
+      if(!v||v.indexOf('@')<1)return false;
+      api('addUser',{email:v}).then(r=>{serverUsers=r.users||[];renderUsersModal();}).catch(()=>setSync('error'));
+      return true;
+    }
+  }));
+}
+$('#usersBtn').addEventListener('click',openUsersModal);
+$('#usersModalX').addEventListener('click',closeUsersModal);
+$('#usersModal').addEventListener('click',e=>{if(e.target.id==='usersModal')closeUsersModal();});
+$('#signoutBtn').addEventListener('click',signOut);
+
 $('#copyLinkBtn').addEventListener('click',async()=>{
   const base=location.href.split(/[?#]/)[0];
   const key=serverTokens[currentBrand]||brandToken(currentBrand);
@@ -1568,24 +1637,50 @@ function startAutosave(){
     }catch(e){setSync('error');}
   },2500);
 }
-/* Toggle the passcode gate between its input row and the Mobius "checking…" loader. */
-function gateBusy(on){
+/* ---------- Sign in: Google (primary) + team passcode (fallback) ---------- */
+function gateBusy(on,msg){
   $('#gateGo').disabled=on;$('#gateIn').disabled=on;
-  if(on){$('#gateRow').style.display='none';$('#gateLoad').style.display='flex';$('#gateMsg').textContent='Checking passcode…';}
-  else{$('#gateLoad').style.display='none';$('#gateRow').style.display='flex';}
+  if(on){$('#gsiWrap').style.display='none';$('#gateRow').style.display='none';$('#gateLoad').style.display='flex';$('#gateMsg').textContent=msg||'Signing in…';}
+  else{$('#gateLoad').style.display='none';}
 }
-function showGate(msg){
+function showGate(msg,hideSignin){
   $('#gate').hidden=false;
-  if(msg){$('#gateMsg').textContent=msg;$('#gateRow').style.display='none';$('#gateLoad').style.display='none';}
-  else{gateBusy(false);$('#gateMsg').textContent='Enter the Mobius team passcode.';setTimeout(()=>$('#gateIn').focus(),50);}
+  $('#gateLoad').style.display='none';$('#gateRow').style.display='none';
+  if(hideSignin){$('#gsiWrap').style.display='none';}
+  else{$('#gsiWrap').style.display='flex';renderGSI();}
+  $('#gateMsg').textContent=msg||'Sign in to your Q4 Playbook.';
+}
+function showPasscode(){
+  $('#gsiWrap').style.display='none';$('#gateLoad').style.display='none';
+  $('#gateRow').style.display='flex';gateBusy(false);
+  $('#gateMsg').textContent='Enter the Mobius team passcode.';
+  setTimeout(()=>$('#gateIn').focus(),50);
 }
 function hideGate(){$('#gate').hidden=true;}
-async function adminBoot(pass){
+
+let gsiInit=false;
+function renderGSI(){
+  if(!(window.google&&google.accounts&&google.accounts.id)){setTimeout(renderGSI,300);return;}
+  if(!gsiInit){google.accounts.id.initialize({client_id:GOOGLE_CLIENT_ID,callback:onGoogleCredential});gsiInit=true;}
+  const el=$('#gsiBtn');if(el){el.innerHTML='';google.accounts.id.renderButton(el,{theme:'filled_blue',size:'large',shape:'pill',text:'signin_with',width:260});}
+}
+async function onGoogleCredential(resp){
+  gateBusy(true,'Signing in…');
+  try{
+    const r=await api('googleAuth',{idToken:resp.credential});
+    authTok=r.token;try{localStorage.setItem('q4auth',authTok);}catch(e){}
+    adminPass=null;try{sessionStorage.removeItem('q4pass');}catch(e){}
+    await adminBoot();
+  }catch(e){
+    authTok=null;try{localStorage.removeItem('q4auth');}catch(_){}
+    showGate(String(e.message||e).replace(/^Error:\s*/,'')||'Sign-in failed — try again.');
+  }
+}
+async function adminBoot(){
   setSync('loading');
-  const r=await api('adminLoad',{pass});
+  const r=await api('adminLoad',{});
   backendDefaults=('defaults' in r);
-  adminPass=pass;
-  try{sessionStorage.setItem('q4pass',pass);}catch(e){}
+  isAdmin=!!r.isAdmin;myEmail=r.email||myEmail;serverUsers=r.users||[];
   BRANDS.length=0;serverTokens={};
   Object.keys(store).forEach(k=>delete store[k]);
   r.brands.forEach(x=>{BRANDS.push(x.name);serverTokens[x.name]=x.token;});
@@ -1596,13 +1691,19 @@ async function adminBoot(pass){
   Object.assign(defaultDates,r.defaults||{});
   if(r.bf)$('#bfDate').value=r.bf;
   if(!BRANDS.length){
-    const nm='My First Brand';
-    const r2=await api('addBrand',{pass,name:nm});
-    serverTokens[nm]=r2.token;BRANDS.push(nm);store[nm]=newBrandState();
+    const r2=await api('addBrand',{name:'My First Brand'});
+    serverTokens['My First Brand']=r2.token;BRANDS.push('My First Brand');store['My First Brand']=newBrandState();
   }
   currentBrand=BRANDS[0];
   rebuildBrandSelect();renderAll();
   hideGate();setSync('synced');startAutosave();
+}
+function signOut(){
+  authTok=null;adminPass=null;isAdmin=false;myEmail='';
+  try{localStorage.removeItem('q4auth');}catch(e){}
+  try{sessionStorage.removeItem('q4pass');}catch(e){}
+  try{if(window.google&&google.accounts&&google.accounts.id)google.accounts.id.disableAutoSelect();}catch(e){}
+  location.reload();
 }
 async function boot(){
   if(!API_ON()){setSync('local');return;}
@@ -1627,25 +1728,23 @@ async function boot(){
       /* Dead client link: don't expose the team view behind the gate. */
       document.body.classList.remove('booting');
       $('#gate').style.background='var(--bg)';
-      showGate('This link is invalid or expired. Ask the Mobius team for a fresh one.');
+      showGate('This link is invalid or expired. Ask the Mobius team for a fresh one.',true);
     }
     return;
   }
-  let cached=null;
-  try{cached=sessionStorage.getItem('q4pass');}catch(e){}
-  if(cached){
-    try{await adminBoot(cached);return;}
-    catch(e){try{sessionStorage.removeItem('q4pass');}catch(_){}}
-  }
+  let tok=null;try{tok=localStorage.getItem('q4auth');}catch(e){}
+  if(tok){authTok=tok;try{await adminBoot();return;}catch(e){authTok=null;try{localStorage.removeItem('q4auth');}catch(_){}}}
+  let cached=null;try{cached=sessionStorage.getItem('q4pass');}catch(e){}
+  if(cached){adminPass=cached;try{await adminBoot();return;}catch(e){adminPass=null;try{sessionStorage.removeItem('q4pass');}catch(_){}}}
   showGate();
 }
 async function gateTry(){
   const inEl=$('#gateIn'),v=inEl.value.trim();
   if(!v){inEl.classList.add('err');setTimeout(()=>inEl.classList.remove('err'),900);return;}
-  gateBusy(true);
-  try{await adminBoot(v);}
+  gateBusy(true,'Checking passcode…');adminPass=v;
+  try{await adminBoot();try{sessionStorage.setItem('q4pass',v);}catch(e){}}
   catch(e){
-    gateBusy(false);
+    adminPass=null;showPasscode();
     inEl.value='';inEl.classList.add('err');
     $('#gateMsg').textContent='Wrong passcode — try again.';
     setTimeout(()=>{inEl.classList.remove('err');inEl.focus();},900);
@@ -1653,6 +1752,7 @@ async function gateTry(){
 }
 $('#gateGo').addEventListener('click',gateTry);
 $('#gateIn').addEventListener('keydown',e=>{if(e.key==='Enter')gateTry();});
+$('#gatePassLink').addEventListener('click',showPasscode);
 
 /* When opened via a client link (backend mode), don't paint the team view
    first — cover the page until boot() has the client data, so it lands

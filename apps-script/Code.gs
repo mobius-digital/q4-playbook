@@ -35,6 +35,14 @@ function setup() {
   Logger.log('Now deploy as a Web app (Execute as Me, access: Anyone) and paste the URL into index.html.');
 }
 
+/* Run this ONCE in the editor after enabling Google sign-in, to grant the
+   "connect to an external service" permission (used to verify Google logins). */
+function authorize() {
+  UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?id_token=x', { muteHttpExceptions: true });
+  getDb_();
+  Logger.log('Authorized — Google sign-in is ready.');
+}
+
 function getDb_() {
   const props = PropertiesService.getScriptProperties();
   let id = props.getProperty('DB_ID');
@@ -64,6 +72,64 @@ function json_(o) {
   return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
 }
 
+/* ---------- Google sign-in, allow-list & sessions ---------- */
+
+var OWNER = 'cole@go-mobius-digital.com';                                       // always allowed + admin
+var GOOGLE_CLIENT_ID = '1084707732685-tu8ra68po4vs4rhbt71rkpej72g4pg28.apps.googleusercontent.com';
+var SESSION_TTL = 30 * 24 * 60 * 60 * 1000;                                     // 30 days
+
+function usersList_() { return getGlobal_('users') || []; }
+function isAllowed_(email) { email = String(email || '').toLowerCase(); return email === OWNER || usersList_().indexOf(email) >= 0; }
+
+function verifyGoogle_(idToken) {
+  if (!idToken) throw 'Missing sign-in token';
+  var res = UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(idToken), { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) throw 'Sign-in verification failed';
+  var info = JSON.parse(res.getContentText());
+  if (info.aud !== GOOGLE_CLIENT_ID) throw 'Sign-in was issued for a different app';
+  if (String(info.email_verified) !== 'true') throw 'Your Google email is not verified';
+  if (Number(info.exp) * 1000 < Date.now()) throw 'Sign-in expired — try again';
+  return String(info.email).toLowerCase();
+}
+
+function sessions_() { return getGlobal_('sessions') || {}; }
+function newSession_(email) {
+  var s = sessions_(), now = Date.now();
+  Object.keys(s).forEach(function (t) { if (!s[t] || !s[t].ts || now - s[t].ts > SESSION_TTL) delete s[t]; });
+  var token = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
+  s[token] = { email: email, ts: now };
+  setGlobal_('sessions', s);
+  return token;
+}
+function sessionEmail_(token) {
+  if (!token) return null;
+  var e = sessions_()[token];
+  if (!e || Date.now() - e.ts > SESSION_TTL) return null;
+  return e.email;
+}
+function authEmail_(req) {                     // valid, allow-listed email from a session token, else null
+  var e = sessionEmail_(req.auth);
+  return (e && isAllowed_(e)) ? e : null;
+}
+
+function googleAuth_(req) {
+  var email = verifyGoogle_(req.idToken);
+  if (!isAllowed_(email)) throw 'Access denied for ' + email + '. Ask the Q4 Playbook owner to add your email.';
+  return { token: newSession_(email), email: email, isAdmin: email === OWNER };
+}
+function addUser_(email) {
+  email = String(email || '').trim().toLowerCase();
+  if (!email || email.indexOf('@') < 1) throw 'Enter a valid email address';
+  var u = usersList_();
+  if (u.indexOf(email) < 0) { u.push(email); setGlobal_('users', u); }
+  return { users: u };
+}
+function removeUser_(email) {
+  email = String(email || '').trim().toLowerCase();
+  setGlobal_('users', usersList_().filter(function (x) { return x !== email; }));
+  return { users: usersList_() };
+}
+
 /* ---------- HTTP entry points ---------- */
 
 function doGet() { return json_({ ok: true, service: 'q4-playbook' }); }
@@ -85,14 +151,22 @@ function route_(req) {
   switch (req.action) {
     case 'clientLoad': return clientLoad_(req);
     case 'clientSave': return clientSave_(req);
+    case 'googleAuth': return googleAuth_(req);
   }
-  if (String(req.pass) !== pass_()) throw 'Bad passcode';
+  // Team actions: allow a valid Google session OR the passcode (emergency fallback).
+  var email = authEmail_(req);
+  var byPass = String(req.pass) === pass_();
+  if (!email && !byPass) throw 'Not authorized — sign in again';
+  var admin = (email === OWNER) || byPass;                 // passcode = owner-level access
   switch (req.action) {
-    case 'adminLoad': return adminLoad_();
+    case 'adminLoad': return adminLoad_(email, admin);
     case 'saveState': return saveState_(req.brand, req.state);
     case 'saveGlobal': return saveGlobal_(req);
     case 'addBrand': return addBrand_(req.name);
     case 'archiveBrand': return archiveBrand_(req.name);
+    case 'listUsers': if (!admin) throw 'Owner only'; return { users: usersList_() };
+    case 'addUser': if (!admin) throw 'Owner only'; return addUser_(req.email);
+    case 'removeUser': if (!admin) throw 'Owner only'; return removeUser_(req.email);
   }
   throw 'Unknown action: ' + req.action;
 }
@@ -139,7 +213,7 @@ function setGlobal_(key, obj) {
 
 /* ---------- actions ---------- */
 
-function adminLoad_() {
+function adminLoad_(email, admin) {
   const bs = brands_().filter(function (b) { return !b.archived; });
   const sm = stateMap_();
   const states = {};
@@ -149,7 +223,10 @@ function adminLoad_() {
     states: states,
     slots: getGlobal_('slots') || {},
     bf: getGlobal_('bf') || '',
-    defaults: getGlobal_('defaults') || {}
+    defaults: getGlobal_('defaults') || {},
+    email: email || '',
+    isAdmin: !!admin,
+    users: admin ? usersList_() : []
   };
 }
 
